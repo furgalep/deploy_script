@@ -17,13 +17,14 @@ TEMP_DIR_BASE="/tmp/deploy_iic"
 GIT_CONF_FILE=$1
 ROS_CONF_FILE=$2
 EXCLUDE_FILE=$3
-GIT_DEST=$4
+STACK_FILE=$4
+GIT_DEST=$5
 
 #check if args are provided
-if [ -z "$GIT_CONF_FILE" ] || [ -z "$ROS_CONF_FILE" ] || [ -z "$EXCLUDE_FILE" ] || [ -z "$GIT_DEST" ]
+if [ -z "$GIT_CONF_FILE" ] || [ -z "$ROS_CONF_FILE" ] || [ -z "$EXCLUDE_FILE" ] || [ -z "$STACK_FILE" ] || [ -z "$GIT_DEST" ] 
   then
     echo 
-    echo -e "Usage: deploy_ros  GIT_SRC_LIST  ROS_PKG_FILE  EXCLUDE_FILE  DEPLOY_REPO_URL\n"
+    echo -e "Usage: deploy_ros  GIT_SRC_LIST  ROS_PKG_FILE  EXCLUDE_FILE  STACK_CPY_FILE  DEPLOY_REPO_URL\n"
     echo -e "   This tool allows to download several git repositories (upstream), copy "
     echo -e "   ROS packages from these source repos to update another deployment git"
     echo -e "   repository with the changes."
@@ -48,6 +49,13 @@ if [ -z "$GIT_CONF_FILE" ] || [ -z "$ROS_CONF_FILE" ] || [ -z "$EXCLUDE_FILE" ] 
     echo -e "                           ...   "
     echo -e "                          *.bag"
     echo
+    echo -e "   STACK_CPY_FILE:  Line separated list of files that should be copied along"
+    echo -e "                    with the stack.xml. If a package specified in ROS_PKG_FILE"
+    echo -e "                    is part of a stack, the stack.xml will be copied aswell."
+    echo -e "                    Further you can set in this file what files from the ROS"
+    echo -e "                    stack (non ROS packages) you want to copy aswell."
+    echo -e "                    E.g. a folder for cmake find-scripts"
+    echo
 
     exit 10
 fi
@@ -56,6 +64,7 @@ fi
 if [ ! -f $GIT_CONF_FILE ]; then echo "Git config file not found: $GIT_CONF_FILE"; exit 10; fi
 if [ ! -f $ROS_CONF_FILE ]; then echo "Ros config file not found: $ROS_CONF_FILE"; exit 10; fi
 if [ ! -f $EXCLUDE_FILE ]; then echo "Copy exclude config file not found: $EXCLUDE_FILE"; exit 10; fi
+if [ ! -f $STACK_FILE ]; then echo "Stack copy config file not found: $STACK_FILE"; exit 10; fi
 
 #load git configuration (format url,(tag or branch) )
 GIT_SRC_LIST=()
@@ -76,6 +85,7 @@ do
   fi
 done < $GIT_CONF_FILE
 
+#GIT_SRC_LIST=()                                                       #CHANGE HERE
 
 #load ros package configuration (format ros_package_name )
 ROS_PKG_COPY_LIST=()
@@ -109,6 +119,23 @@ do
   fi
 done < $EXCLUDE_FILE
 
+
+#load copy exclude configuration ( rsync params )
+STACK_CPY=()
+
+while IFS=, read col1
+do
+  #if lines are not empty
+  if [ -n "$col1" ]
+    then  
+      #trim trailing/leading spaces
+      col1=$(echo $col1 | tr -d ' ')
+
+      #stores values in array
+
+      STACK_CPY+=($col1)
+  fi
+done < $STACK_FILE
 
 
 ##############################
@@ -235,12 +262,14 @@ do
   fi
 done
 
+
 #exit if we didnt find one package or one is not unique
 if [ $PACKGE_NOT_FOUND -eq 1 ]
   then
     echo -e "\n Check specified ROS package list!"
     exit 2
 fi
+
 
 ################################
 # Copy the needed ROS packages #
@@ -256,42 +285,87 @@ done
 
 #copy each package using rsync (easy exclude handling)
 for ros_pkg_dir in "${ROS_PKG_DIR_LIST[@]}"
-do
-  DO_EXIT=0
+  do
+    DO_EXIT=0
 
-  #get the destination
-  dest_dir=${ros_pkg_dir/$TEMP_DIR_UPSTREAM/$TEMP_DIR_DOWNSTREAM}
-  
-  #execute the copy
-  mkdir -p $dest_dir
-  COPY_CMD="rsync -av $EXCLUDE $ros_pkg_dir/ $dest_dir"
+    #get the destination
+    dest_dir=${ros_pkg_dir/$TEMP_DIR_UPSTREAM/$TEMP_DIR_DOWNSTREAM}
+    
+    #execute the pacakge copy
+    mkdir -p $dest_dir
+    COPY_CMD="rsync -av $EXCLUDE $ros_pkg_dir/ $dest_dir"
 
-  echo $COPY_CMD >> $LOG_FILE
-  script -e -q -c "$COPY_CMD" /dev/null >> $LOG_FILE
+    echo $COPY_CMD >> $LOG_FILE
+    script -e -q -c "$COPY_CMD" /dev/null >> $LOG_FILE
 
-  if [ $? -ne 0 ]
+    if [ $? -ne 0 ]
+      then
+        # Copy failed
+        pkg_dirs=$(find $TEMP_DIR_UPSTREAM | grep "$ros_pkg/manifest.xml" | tr '\n' ",")
+
+        echo -e "\r\033[K  [$COLOR_RED FAIL $COLOR_END] $ros_pkg_dir"
+        DO_EXIT=1
+    else
+        # Copy success
+        echo -e "\r\033[K  [$COLOR_GREEN OK $COLOR_END] $ros_pkg_dir"
+    fi
+
+  #exit if we didnt find one package or one is not unique
+  if [ $DO_EXIT -eq 1 ]
     then
-      # Copy failed
-      pkg_dirs=$(find $TEMP_DIR_UPSTREAM | grep "$ros_pkg/manifest.xml" | tr '\n' ",")
-
-      echo -e "\r\033[K  [$COLOR_RED FAIL $COLOR_END] $ros_pkg_dir"
-      DO_EXIT=1
-  else
-      # Copy success
-      echo -e "\r\033[K  [$COLOR_GREEN OK $COLOR_END] $ros_pkg_dir"
-
-      #store in list
-      ROS_PKG_DIR_LIST+=($pkg_dir)
+      echo -e "\n Copying failed... Check log file at $LOG_FILE"
+      exit 2
   fi
 
-#exit if we didnt find one package or one is not unique
-if [ $DO_EXIT -eq 1 ]
-  then
-    echo -e "\n Copying failed... Check log file at $LOG_FILE"
-    exit 2
-fi
-
 done
+
+################################
+# Copy parent stack files      #
+################################
+#check each package if it has a stack.xml in the folder one lvl above, if so copy the stack.xml downstream and also all files specifed (if it exists) in the input file STACK
+
+
+
+for ros_pkg_dir in "${ROS_PKG_DIR_LIST[@]}"
+do
+  #check if package is in a stack
+  LOG=$(ls $ros_pkg_dir/.. | grep stack.xml)
+
+
+  if [ $LOG = "stack.xml" ]
+    then
+    
+    #get the src/dst folders
+    dest_dir_stack=${ros_pkg_dir/$TEMP_DIR_UPSTREAM/$TEMP_DIR_DOWNSTREAM}"/../"
+    src_dir_stack="$ros_pkg_dir/.."
+
+    #always copy stack.xml
+    LOG=$( cp -R $src_dir_stack"/"stack.xml $dest_dir_stack)
+    echo $LOG >> $LOG_FILE
+
+    #copy all files specified in stack file
+    for cpy_file in "${STACK_CPY[@]}"
+    do
+      #file to copy with path
+      file=$src_dir_stack"/"$cpy_file
+
+      #copy if file exists
+      if [ -f $file ];
+        then
+          LOG=$( cp -R $file $dest_dir_stack)
+          echo $LOG >> $LOG_FILE
+        fi
+
+      #copy if directory exists
+      if [ -d $file ];
+        then
+          LOG=$( cp -R $file $dest_dir_stack)
+          echo $LOG >> $LOG_FILE
+        fi
+    done
+  fi
+done
+
 
 
 ###############################
@@ -430,8 +504,6 @@ echo
 
 
 exit 0
-
-
 
 
 
