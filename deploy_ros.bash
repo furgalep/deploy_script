@@ -168,13 +168,14 @@ do
   #check for login, if not ask pw
   echo
   LOG=$( git ls-remote ${GIT_SRC_LIST[idx]} )
+  echo $LOG >> $LOG_FILE
   tput cuu 1;
 
   #repair formatting if asked for pw  
   if [[ $LOG != *refs* ]]
     then
       echo -e "\r\033[K  [$COLOR_RED FAIL $COLOR_END] $repo_url, $repo_branch"
-      echo "Auth failed!"
+      echo "Auth failed! See log file: $LOG_FILE!"
       exit 2
   fi
 
@@ -306,13 +307,15 @@ echo -en "\r  [$COLOR_BLUE FETCH $COLOR_END] Cloning into deployment repo: $GIT_
 #check for login, if not ask pw
 echo
 LOG=$( git ls-remote $GIT_DEST )
+echo $LOG
+echo $LOG >> $LOG_FILE
 tput cuu 1;
 
 #check if pw ok
 if [[ $LOG != *refs* ]]
   then
     echo -e "\r\033[K  [$COLOR_RED FAIL $COLOR_END] $repo_url, $repo_branch"
-    echo "Auth failed!"
+    echo -e "\nEither the git auth failed or this is your initial commit! (See log file: $LOG_FILE)\n\nIf this is your initial commit: Switch to the directory $TEMP_DIR_DEPLOY and do the initial commit/push manually with: \n\t cd $TEMP_DIR_DOWNSTREAM \n\t git init \n\t git remote add origin $GIT_DEST \n\t git add -A \n\t git commit -m \"initial commit\" \n\t git push origin master "
     exit 2
 fi
 
