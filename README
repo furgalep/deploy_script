@@ -1,4 +1,4 @@
 
 Example Usage:
 
-./deploy_ros.bash git ros exclude https://github.com/schneith/test_deploy
+./deploy_ros.bash  git ros exclude keep stack https://github.com/ethz-asl/offline_calibration_toolbox
