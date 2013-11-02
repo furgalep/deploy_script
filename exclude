@@ -1,8 +1,5 @@
 download_calibration_data.sh
 dataset_simulation
-autogen_test_module
-autogen_module/
-autogen/
 
 
 .git
