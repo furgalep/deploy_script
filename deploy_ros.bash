@@ -17,14 +17,15 @@ TEMP_DIR_BASE="/tmp/deploy_iic"
 GIT_CONF_FILE=$1
 ROS_CONF_FILE=$2
 EXCLUDE_FILE=$3
-STACK_FILE=$4
-GIT_DEST=$5
+KEEP_FILE=$4
+STACK_FILE=$5
+GIT_DEST=$6
 
 #check if args are provided
-if [ -z "$GIT_CONF_FILE" ] || [ -z "$ROS_CONF_FILE" ] || [ -z "$EXCLUDE_FILE" ] || [ -z "$STACK_FILE" ] || [ -z "$GIT_DEST" ] 
+if [ -z "$GIT_CONF_FILE" ] || [ -z "$ROS_CONF_FILE" ] || [ -z "$EXCLUDE_FILE" ] || [ -z "$STACK_FILE" ] || [ -z "$GIT_DEST" ] || [ -z "$KEEP_FILE" ] 
   then
     echo 
-    echo -e "Usage: deploy_ros  GIT_SRC_LIST  ROS_PKG_FILE  EXCLUDE_FILE  STACK_CPY_FILE  DEPLOY_REPO_URL\n"
+    echo -e "Usage: deploy_ros  GIT_SRC_LIST  ROS_PKG_FILE  EXCLUDE_FILE KEEP_FILE  STACK_CPY_FILE  DEPLOY_REPO_URL\n"
     echo -e "   This tool allows to download several git repositories (upstream), copy "
     echo -e "   ROS packages from these source repos to update another deployment git"
     echo -e "   repository with the changes."
@@ -49,6 +50,12 @@ if [ -z "$GIT_CONF_FILE" ] || [ -z "$ROS_CONF_FILE" ] || [ -z "$EXCLUDE_FILE" ] 
     echo -e "                           ...   "
     echo -e "                          *.bag"
     echo
+    echo -e "   KEEP_FILE:       Line separated list of files to exclude from updating."
+    echo -e "                    the file already on the deployment repo will be kept."
+    echo -e "                      Ex: README"
+    echo -e "                           ...   "
+    echo -e "                          .gitignore"
+    echo
     echo -e "   STACK_CPY_FILE:  Line separated list of files that should be copied along"
     echo -e "                    with the stack.xml. If a package specified in ROS_PKG_FILE"
     echo -e "                    is part of a stack, the stack.xml will be copied aswell."
@@ -64,6 +71,7 @@ fi
 if [ ! -f $GIT_CONF_FILE ]; then echo "Git config file not found: $GIT_CONF_FILE"; exit 10; fi
 if [ ! -f $ROS_CONF_FILE ]; then echo "Ros config file not found: $ROS_CONF_FILE"; exit 10; fi
 if [ ! -f $EXCLUDE_FILE ]; then echo "Copy exclude config file not found: $EXCLUDE_FILE"; exit 10; fi
+if [ ! -f $KEEP_FILE ]; then echo "Deployment update exclude file (keep file) not found: $KEEP_FILE"; exit 10; fi
 if [ ! -f $STACK_FILE ]; then echo "Stack copy config file not found: $STACK_FILE"; exit 10; fi
 
 #load git configuration (format url,(tag or branch) )
@@ -118,6 +126,23 @@ do
       COPY_EXCLUDE+=($col1)
   fi
 done < $EXCLUDE_FILE
+
+
+#load copy exclude configuration ( rsync params )
+KEEP_LIST=()
+
+while IFS=, read col1
+do
+  #if lines are not empty
+  if [ -n "$col1" ]
+    then  
+      #trim trailing/leading spaces
+      col1=$(echo $col1 | tr -d ' ')
+
+      #stores values in array
+      KEEP_LIST+=($col1)
+  fi
+done < $KEEP_FILE
 
 
 #load copy exclude configuration ( rsync params )
@@ -411,6 +436,21 @@ fi
 cp -R $TEMP_DIR_DEPLOY"/.git" $TEMP_DIR_DOWNSTREAM
 cd $TEMP_DIR_DOWNSTREAM
 
+
+#copy the files which should not be updated according to user input list, from the online deployment repo to local downstream repo, so it doesnt get deleted with the "git add -A"
+for file in "${KEEP_LIST[@]}"
+do
+  #if file or directory exists
+  path_file=$TEMP_DIR_DEPLOY/$file
+  
+  if [ -d $path_file ] || [ -f $path_file ] 
+  then
+    LOG=$( cp -R $path_file $TEMP_DIR_DOWNSTREAM/$file )
+    echo $LOG >> $LOG_FILE
+  fi
+done
+
+
 #git add all files
 echo -en "\r  [$COLOR_BLUE WORKING $COLOR_END] Adding new files to deployment repo"
 
@@ -429,8 +469,7 @@ if [ $GIT_EXIT_CODE -ne 0 ]
     echo -e "\r\033[K  [$COLOR_GREEN OK $COLOR_END] Adding new files to deployment repo"
 fi
 
-
-#git add all files
+#git commit all files
 COMMIT_MSG="update to new version"
 
 echo -en "\r  [$COLOR_BLUE WORKING $COLOR_END] Commiting changes in deployment repo "
