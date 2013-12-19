@@ -195,11 +195,10 @@ touch $LOG_FILE
 ##############################
 # Define some constants      #
 ##############################
-COLOR_RED='\E[31m'
-COLOR_BLUE='\E[34m'
-COLOR_GREEN='\E[32m'
-COLOR_END='\033[0m'
-
+COLOR_RED=$(tput setaf 1)
+COLOR_BLUE=$(tput setaf 4)
+COLOR_GREEN=$(tput setaf 2)
+COLOR_END=$(tput sgr0)
 
 ##############################
 # Get the sources            #
